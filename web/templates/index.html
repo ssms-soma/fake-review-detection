@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Review authenticity estimate</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">Review authenticity estimate</div>
+      <p class="tagline">Ensemble model · educational demo · not legal or platform evidence</p>
+    </div>
+  </header>
+
+  <div class="shell">
+    <section class="panel" aria-labelledby="in-label">
+      <h2 id="in-label">Input</h2>
+      <label for="review_text">Review text</label>
+      <textarea id="review_text" rows="8" placeholder="Paste the review body…" autocomplete="off"></textarea>
+
+      <div class="row">
+        <div class="field">
+          <label for="title">Title <span class="optional">optional</span></label>
+          <input type="text" id="title" placeholder="Headline if any" autocomplete="off" />
+        </div>
+        <div class="field tight">
+          <label for="rating">Stars</label>
+          <select id="rating">
+            <option value="5">5</option>
+            <option value="4">4</option>
+            <option value="3" selected>3</option>
+            <option value="2">2</option>
+            <option value="1">1</option>
+          </select>
+        </div>
+      </div>
+      <label class="check">
+        <input type="checkbox" id="verified" />
+        Verified purchase
+      </label>
+
+      <details class="advanced">
+        <summary>Product context (optional)</summary>
+        <div class="inner">
+          Used only for aggregate features when you have them. Otherwise defaults match a single-review cold start.
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="avg_rating">Avg. product rating</label>
+            <input type="number" id="avg_rating" min="1" max="5" step="0.1" placeholder="e.g. 4.2" />
+          </div>
+          <div class="field">
+            <label for="num_reviews">Review count</label>
+            <input type="number" id="num_reviews" min="1" step="1" placeholder="e.g. 120" />
+          </div>
+        </div>
+      </details>
+
+      <button type="button" id="submit" class="btn-primary">Run estimate</button>
+      <p id="error" class="error" hidden></p>
+    </section>
+
+    <section class="panel results-panel" id="results" hidden aria-live="polite">
+      <h2>Result</h2>
+
+      <div class="result-hero">
+        <div class="verdict-pill" id="verdict" role="status"></div>
+        <div class="prob-row">
+          <div class="prob-main" id="prob_main"></div>
+          <div class="prob-sub" id="prob_sub"></div>
+        </div>
+        <div class="meter" aria-hidden="true"><div id="meter_fill"></div></div>
+      </div>
+
+      <details class="explain">
+        <summary>Why this label?</summary>
+        <div class="body">
+          <p id="verdict_why"></p>
+        </div>
+      </details>
+
+      <details class="explain">
+        <summary>How the number is built</summary>
+        <div class="body">
+          <p>
+            Three channels each output a probability of <em>genuine</em>. They are combined in <strong>logit</strong> space
+            (log-odds), with learned weights and a bias, then mapped back to a probability. Open <strong>Model channels</strong> for weights and per-channel scores.
+          </p>
+        </div>
+      </details>
+
+      <details class="explain">
+        <summary>Model channels</summary>
+        <div class="body">
+          <div class="table-wrap">
+            <table class="data" id="ensemble_table">
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Weight</th>
+                  <th>P(genuine)</th>
+                  <th>Weighted logit</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="mono" style="margin-top:0.75rem;border:none;background:transparent;padding:0;font-size:0.75rem;color:var(--text2)" id="sum_line"></p>
+        </div>
+      </details>
+
+      <details class="explain">
+        <summary>Heuristic checks</summary>
+        <div class="body">
+          <p>Rule-based risk in [0,1] (higher = more suspicious). Combined into one signal for the ensemble.</p>
+          <div class="heur-grid" id="heur_grid"></div>
+        </div>
+      </details>
+
+      <details class="explain">
+        <summary>Tabular model — top contributions</summary>
+        <div class="body">
+          <p>Logistic regression on scaled features. <strong>Δ logit</strong> = coefficient × scaled value; larger magnitude = stronger push toward genuine (+) or deceptive (−).</p>
+          <div class="table-wrap">
+            <table class="data" id="tabular_table">
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Scaled</th>
+                  <th>Coef</th>
+                  <th>Δ logit</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="explain">
+        <summary>Feature snapshot</summary>
+        <div class="body">
+          <p>Numeric inputs passed to the tabular model for this request (includes derived text stats).</p>
+          <pre class="mono" id="features_out"></pre>
+        </div>
+      </details>
+
+      <details class="explain">
+        <summary>About this demo</summary>
+        <div class="body">
+          <p>
+            Trained on a labeled ecommerce-style corpus; outputs reflect statistical patterns, not ground truth.
+            Star rating is not duplicated as a raw tabular feature (see project README). Code is organized in numbered stages under
+            <code>src/fake_review_detection/stages/</code> for walkthroughs.
+          </p>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <footer class="foot">
+    Training report: <code>reports/training/training_report.html</code>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id); // short alias for getElementById
+
+    function verdictClass(label) {
+      // CSS class for the verdict pill from the human-readable label string
+      const s = (label || "").toLowerCase();
+      if (s.includes("genuine (strong)")) return "genuine-strong";
+      if (s.includes("genuine (moderate)")) return "genuine-mod";
+      if (s.includes("genuine (weak)")) return "genuine-weak";
+      if (s.includes("deceptive (strong)")) return "decept-strong";
+      if (s.includes("deceptive (moderate)")) return "decept-mod";
+      if (s.includes("deceptive (weak)")) return "decept-weak";
+      return "";
+    }
+
+    function humanizeKey(k) {
+      // Turn snake_case heuristic keys into Title Case for the small grid
+      return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    $("submit").addEventListener("click", async () => {
+      // POST form fields as JSON; server runs the full ensemble and returns explain payload
+      $("error").hidden = true;
+      const payload = {
+        review_text: $("review_text").value,
+        title: $("title").value,
+        rating: parseInt($("rating").value, 10),
+        verified_purchase: $("verified").checked,
+        average_rating: $("avg_rating").value || null,
+        num_reviews: $("num_reviews").value || null,
+      };
+      $("submit").disabled = true;
+      try {
+        const res = await fetch("/api/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          $("error").textContent = data.error || "Request failed";
+          $("error").hidden = false;
+          return;
+        }
+        render(data);
+      } catch (e) {
+        $("error").textContent = String(e);
+        $("error").hidden = false;
+      } finally {
+        $("submit").disabled = false;
+      }
+    });
+
+    function render(data) {
+      // Bind probabilities, ensemble table, heuristics, tabular SHAP-style terms, feature JSON
+      $("results").hidden = false;
+      const v = $("verdict");
+      v.textContent = data.verdict_label;
+      v.className = "verdict-pill " + verdictClass(data.verdict_label);
+
+      const p = data.probability_genuine;
+      $("prob_main").textContent = (p * 100).toFixed(1) + "%";
+      $("prob_sub").textContent = "estimated genuine · " + (data.probability_deceptive * 100).toFixed(1) + "% other class";
+      $("meter_fill").style.width = (p * 100).toFixed(1) + "%";
+
+      $("verdict_why").textContent = data.verdict_detail || "—";
+
+      const tbody = $("ensemble_table").querySelector("tbody");
+      tbody.innerHTML = "";
+      const c = data.components;
+      const th = c.char_tfidf_model.tfidf_head || "";
+      const head =
+        th === "linear_svc_calibrated"
+          ? "SVM"
+          : th === "sbert_minilm"
+            ? "SBERT"
+            : th === "fasttext_mean_pool" || th === "fasttext_subword_hash"
+              ? "FastText"
+              : "LR";
+      const rows = [
+        ["Tabular (logistic)", c.tabular_model],
+        ["Text (" + head + ")", c.char_tfidf_model],
+        ["Heuristics", c.heuristics],
+      ];
+      for (const [name, comp] of rows) {
+        const pg = comp.probability_genuine != null ? comp.probability_genuine : comp.probability_genuine_mapping;
+        const wl = comp.weighted_logit != null ? comp.weighted_logit : "—";
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td>" + name + "</td>" +
+          "<td>" + comp.weight_in_ensemble + "</td>" +
+          "<td>" + pg + "</td>" +
+          "<td><strong>" + wl + "</strong></td>";
+        tbody.appendChild(tr);
+      }
+      const b = data.logit_breakdown || {};
+      $("sum_line").textContent =
+        "z = " + (data.logit_z != null ? data.logit_z : "—") +
+        " = tabular " + (b.tabular ?? "—") + " + text " + (b.tfidf ?? "—") +
+        " + heuristics " + (b.heuristic ?? "—") + " + bias " + (b.bias ?? "—");
+
+      const hg = $("heur_grid");
+      hg.innerHTML = "";
+      for (const [k, v] of Object.entries(c.heuristics.raw_risk_scores)) {
+        const a = document.createElement("span");
+        a.textContent = humanizeKey(k);
+        const b2 = document.createElement("span");
+        b2.textContent = v;
+        hg.appendChild(a);
+        hg.appendChild(b2);
+      }
+
+      const tt = $("tabular_table").querySelector("tbody");
+      tt.innerHTML = "";
+      for (const row of c.tabular_model.per_feature_logit) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td>" + row.feature + "</td>" +
+          "<td>" + row.scaled_value.toFixed(4) + "</td>" +
+          "<td>" + row.coefficient.toFixed(4) + "</td>" +
+          "<td>" + row.logit_contribution.toFixed(4) + "</td>";
+        tt.appendChild(tr);
+      }
+
+      $("features_out").textContent = JSON.stringify(data.input_features_used, null, 2);
+    }
+  </script>
+</body>
+</html>

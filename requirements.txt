@@ -1,0 +1,22 @@
+# Web + training
+flask>=3.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+matplotlib>=3.8.0
+
+# NLP
+nltk>=3.8.0
+spacy>=3.7.0
+textstat>=0.7.3
+sentence-transformers>=2.2.0
+torch>=2.0.0
+transformers>=4.40.0
+accelerate>=0.30.0
+safetensors>=0.4.0
+# Optional: real corpus FastText (mean pooling). If unavailable, training uses a char n-gram hash + SGD baseline for the third bar.
+# gensim>=4.3.0
+
+# Optional: legacy notebooks / research code
+# xgboost lightgbm catboost keras tensorflow
